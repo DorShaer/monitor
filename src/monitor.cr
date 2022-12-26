@@ -54,6 +54,7 @@ module Monitor
       option "-c CONCURRENCY", "--concurrency=CONCURRENCY", type: Int32, desc: "Number of concurrent requests to make.", default: 10
       option "-t TOTAL_REQUESTS", "--total-requests=TOTAL_REQUESTS", type: Int32, desc: "Total number of requests to make.", default: 1000
       option "-a", "--attack", desc: "Adds <script>alert(1)</script> to the end of the URL.", default: false, type: Bool
+      option "-w", "--nowaf", desc: "Disbale WAF Checks.", default: false, type: Bool
       @files_created : Atomic(Int32) = Atomic(Int32).new(0)
       @medium_response_time : Atomic(Int32) = Atomic(Int32).new(0)
 
@@ -67,8 +68,10 @@ module Monitor
           end
           puts "Adding attack to URL: #{uri.to_s}"
         end
+
         Dir.mkdir("#{Dir.tempdir}/#{uri.host}") unless Dir.exists?("#{Dir.tempdir}/#{uri.host}")
         puts "Debug files will be saved to #{Dir.tempdir}/#{uri.host}"
+        puts "Starting a test against #{uri}".colorize(:green).mode(:bold)
 
         unless uri.host && uri.scheme
           raise "Error: URL Is Malformed"
@@ -86,17 +89,19 @@ module Monitor
             uri_channel.send(uri)
           end
         end
-
         responses = Hash(String | Int32, Int32).new(0)
         exception_messages = Hash(String, String).new
         wafs = Array(Wafalyzer::Waf).new
-        begin
-          puts "Detecting WAFs..."
-          wafs = Wafalyzer.detect(url: uri.to_s)
-        rescue e : Exception
-          puts "Error: Unable to detect WAF #{e.message}"
+        if opts.nowaf
+          puts "--nowaf is detected, skipping WAF checks"
+        else
+          begin
+            puts "Detecting WAFs..."
+            wafs = Wafalyzer.detect(url: uri.to_s)
+          rescue e : Exception
+            puts "Error: Unable to detect WAF #{e.message}"
+          end
         end
-
         wordpress = detect_wordpress(uri)
         random_200 = random_url_give_200(uri)
         potential_subdomains = detect_potential_subdomains(uri)
@@ -163,7 +168,7 @@ module Monitor
       end
 
       def detect_wordpress(uri : URI) : Bool
-        puts "Detecting WordPress..."
+        puts "Checking if the site is a WordPress..."
         body = HTTP::Client.get(uri.to_s).body
         WORDPRESS_INDICATOR.any? { |indicator| body.includes?(indicator) }
       rescue e : Exception
